@@ -1,0 +1,179 @@
+import random
+import numpy as np
+from PIL import Image, ImageOps
+
+class Vertex:
+    def __init__(self, x, y, z):
+        self.x = x
+        self.y = y
+        self.z = z
+        
+def normal(x, y, z):
+    v1 = np.array(y) - np.array(x)
+    v2 = np.array(z) - np.array(x)
+    normal = np.cross(v1, v2)
+    return normal
+
+def turn(a, b, c, t, old):
+    r1 = np.array([[1, 0, 0], [0, np.cos(a), np.sin(a)], [0, -np.sin(a), np.cos(a)]])
+    r2 = np.array([[np.cos(b), 0, np.sin(b)], [0, 1, 0], [-np.sin(b), 0, np.cos(b)]])
+    r3 = np.array([[np.cos(c), np.sin(c), 0], [-np.sin(c), np.cos(c), 0], [0, 0, 1]])
+    result = np.dot(np.dot(np.dot(r1, r2), r3), np.array(old)) + np.array(t)
+    return result
+
+def def_cos(x0, y0, z0, x1, y1, z1, x2, y2, z2):
+    l = [0, 0, 1]
+    normal = [(y1 - y2) * (z1 - z0) - (z1 - z2) * (y1 - y0),
+              (z1 - z2) * (x1 - x0) - (x1 - x2) * (z1 - z0),
+              (x1 - x2) * (y1 - y0) - (y1 - y2) * (x1 - x0)]
+    composition = normal[0]*l[0] + normal[1]*l[1] + normal[2]*l[2]
+    norm = np.sqrt(normal[0]**2 + normal[1]**2 + normal[2]**2)
+    ll = np.sqrt(l[0]**2 + l[1]**2 + l[2]**2)
+    cos = composition/(norm*ll)
+    return cos
+
+vertices = []
+with open("model2.obj", "r") as file:
+    for line in file:
+        if line.startswith("v "):
+            data = line.split()
+            x, y, z = map(float, data[1:])
+            x, y, z = turn(0, np.pi, 0, [0, -0.02, 0.5], [x, y, z])
+            vertices.append(Vertex(x, y, z))
+
+def read_model_data(file_name):
+    polygons = []
+    with open(file_name, 'r') as file:
+        for line in file:
+            if line.startswith('f'):
+                vertices = line.split()[1:]  
+                polygon_vertices = [int(vertex.split('/')[0]) for vertex in vertices]  
+                polygons.append(polygon_vertices)
+    return polygons
+
+polygons = read_model_data('model2.obj')
+
+# Вычисляем нормали к полигонам для каждой вершины
+vertex_normals = np.zeros_like(vertices)
+for i in range(len(polygons)):
+    p1 = polygons[i][0] - 1
+    p2 = polygons[i][1] - 1
+    p3 = polygons[i][2] - 1
+    x0 = vertices[p1].x 
+    y0 = vertices[p1].y 
+    z0 = vertices[p1].z 
+    x1 = vertices[p2].x 
+    y1 = vertices[p2].y 
+    z1 = vertices[p2].z
+    x2 = vertices[p3].x 
+    y2 = vertices[p3].y 
+    z2 = vertices[p3].z
+    n = normal([x0, y0, z0], [x1, y1, z1], [x2, y2, z2])
+    vertex_normals[p1] += n
+    vertex_normals[p2] += n
+    vertex_normals[p3] += n
+    
+for i in range(len(vertex_normals)):
+    vertex_normals[i] /= np.linalg.norm(vertex_normals[i])
+
+# Загрузка изображения текстуры
+texture_picture = np.array(ImageOps.flip(Image.open('model2.jpg')))
+
+def bar(x, y, x0, y0, x1, y1, x2, y2):
+    lambda0 = ((x - x2) * (y1 - y2) - (x1 - x2) * (y - y2)) / ((x0 - x2) * (y1 - y2) - (x1 - x2) * (y0 - y2))
+    lambda1 = ((x0 - x2) * (y - y2) - (x - x2) * (y0 - y2)) / ((x0 - x2) * (y1 - y2) - (x1 - x2) * (y0 - y2))
+    lambda2 = 1.0 - lambda0 - lambda1
+    return lambda0, lambda1, lambda2
+
+def draw(z_buf, img, x0, y0, z0, x1, y1, z1, x2, y2, z2,  u0, v0, u1, v1, u2, v2, color):
+    h = texture_picture.shape[1]
+    w = texture_picture.shape[0]
+    p_x0 = 2000*x0/z0 + 500
+    p_y0 = 2000*y0/z0 + 500
+    p_x1 = 2000*x1/z1 + 500
+    p_y1 = 2000*y1/z1 + 500
+    p_x2 = 2000*x2/z2 + 500
+    p_y2 = 2000*y2/z2 + 500
+
+    xmin = int(min(p_x0, p_x1, p_x2)) 
+    ymin = int(min(p_y0, p_y1, p_y2)) 
+    if xmin < 0: xmin = 0
+    if ymin < 0: ymin = 0
+    xmax = int(max(p_x0, p_x1, p_x2) + 1)
+    ymax = int(max(p_y0, p_y1, p_y2) + 1)
+    if xmax > 1000: xmax = 1000
+    if ymax > 1000: ymax = 1000
+    if ((p_x0 - p_x2) * (p_y1 - p_y2) - (p_x1 - p_x2) * (p_y0 - p_y2)) == 0:
+        return
+    for x in range(xmin, xmax):
+        for y in range(ymin, ymax):
+            b0, b1, b2 = bar(x, y, p_x0, p_y0, p_x1, p_y1, p_x2, p_y2)
+            b = [b0, b1, b2]
+            if b0 >= 0 and b1 >= 0 and b2 >= 0 and def_cos(x0, y0, z0, x1, y1, z1, x2, y2, z2) < 0:
+                z = b0 * z0 + b1 * z1 + b2 * z2
+                if z < z_buf[y][x]:
+                    col = texture_picture[int(h * (b0 * v0 + b1 * v1 + b2 * v2)), int(w * (b0 * u0 + b1 * u1 + b2 * u2))]
+                    c = np.dot(color, b)
+                    if c > 0: c = 0
+                    img[y][x] = col
+                    z_buf[y][x] = z
+
+# Загрузка номеров координат текстур
+def load_texture_indexes(file_path):
+    texture_indices = []
+    with open(file_path, 'r') as file:
+        for line in file:
+            if line.startswith('f'):
+                indices = line.strip().split()[1:]
+                texture_idx = [int(idx.split('/')[1]) for idx in indices]
+                texture_indices.append(texture_idx)
+    return texture_indices
+
+# Загрузка координат текстур
+def load_texture_coords(file_path):
+    texture_coords = []
+    with open(file_path, 'r') as file:
+        for line in file:
+            if line.startswith('vt'):
+                coords = line.strip().split()[1:]
+                texture_coords.append([float(coord) for coord in coords])
+    return texture_coords
+
+textures = load_texture_indexes('model2.obj')
+res_textures = load_texture_coords('model2.obj')
+
+z_buff = np.full((1000, 1000), np.inf,  dtype=np.float32)
+image2 = np.zeros((1000, 1000, 3), dtype=np.uint8)
+
+l = [0, 0, 1]
+
+for i in range(0, len(polygons)):
+    p1 = polygons[i][0] - 1
+    p2 = polygons[i][1] - 1
+    p3 = polygons[i][2] - 1
+    
+    x0 = vertices[p1].x 
+    y0 = vertices[p1].y 
+    z0 = vertices[p1].z 
+    x1 = vertices[p2].x 
+    y1 = vertices[p2].y 
+    z1 = vertices[p2].z
+    x2 = vertices[p3].x 
+    y2 = vertices[p3].y 
+    z2 = vertices[p3].z
+    
+    u0 = res_textures[textures[i][0] - 1][0]
+    u1 = res_textures[textures[i][1] - 1][0]
+    u2 = res_textures[textures[i][2] - 1][0]
+    v0 = res_textures[textures[i][0] - 1][1]
+    v1 = res_textures[textures[i][1] - 1][1]
+    v2 = res_textures[textures[i][2] - 1][1]
+#     draw(z_buff, image2, x0, y0, z0, x1, y1, z1, x2, y2, z2, [vertex_normals[p1], vertex_normals[p2], vertex_normals[p3]])
+    draw(z_buff, image2, x0, y0, z0, x1, y1, z1, x2, y2, z2,  u0, v0, u1, v1, u2, v2,
+         [np.dot(vertex_normals[p1], l), np.dot(vertex_normals[p2], l), np.dot(vertex_normals[p3], l)])
+img = Image.fromarray(image2, mode='RGB')
+img = ImageOps.flip(img)
+img.save('model2.png')
+img.show()
+
+
